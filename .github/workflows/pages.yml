@@ -32,5 +32,3 @@ jobs:
       - name: Deploy
         id: deployment
         uses: actions/deploy-pages@v4
-
-# GitHub Pages enabled; this change triggers the first deployment.

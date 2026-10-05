@@ -12,6 +12,7 @@ export type IFieldMetaSettings = {
   fieldId: string;
   name: string;
   hidden: boolean;
+  width?: number;
 };
 
 export type IPrintTemplate = {
@@ -20,4 +21,6 @@ export type IPrintTemplate = {
   title: string;
   orientation: 'portrait' | 'landscape';
   fields: IFieldMetaSettings[];
+  tableName?: string;
+  updatedAt?: number;
 };

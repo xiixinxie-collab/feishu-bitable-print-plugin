@@ -3,73 +3,77 @@ import type { IFieldMeta } from '@lark-base-open/js-sdk';
 import { computed, ref } from 'vue';
 import type { IFieldMetaSettings, IPrintRow, IPrintTemplate } from '../types';
 
-const SETTING_KEY = 'production_schedule_print_setting_v1';
-const TEMPLATE_KEY = 'multi_print_templates_v1';
-const DEFAULT_FIELDS = new Set(['单号', '产品', '数量', '交期', '生产安排', '已包装数量']);
+const TEMPLATE_KEY = 'easy_print_templates_v2';
 
 const usePrint = () => {
   const fieldList = ref<IFieldMeta[]>([]);
   const rows = ref<IPrintRow[]>([]);
-  const isSettingPanelShow = ref(false);
-  const settingList = ref<IFieldMetaSettings[]>([]);
   const loading = ref(false);
+  const errorMessage = ref('');
+  const tableName = ref('当前多维表格');
   const printScope = ref<'visible' | 'selected'>('visible');
-  const printTitle = ref('生产排期');
+  const printTitle = ref('多维表格打印');
   const orientation = ref<'portrait' | 'landscape'>('portrait');
   const templates = ref<IPrintTemplate[]>([]);
-  const selectedTemplateId = ref('production_schedule');
+  const selectedTemplateId = ref('default_template');
+  const settingList = ref<IFieldMetaSettings[]>([]);
   const visibleSettings = computed(() => settingList.value.filter(item => !item.hidden));
 
-  const getSettingList = async () => {
-    const data = await bitable.bridge.getData<IFieldMetaSettings[]>(SETTING_KEY);
-    const cached = Array.isArray(data)
-      ? new Map(data.map(item => [item.fieldId, item]))
-      : new Map<string, IFieldMetaSettings>();
-    const existing = fieldList.value.map(field => cached.get(field.id) || {
-      fieldId: field.id,
-      name: field.name,
-      hidden: !DEFAULT_FIELDS.has(field.name),
-    });
-    const existingIds = new Set(existing.map(item => item.fieldId));
-    const ordered = Array.isArray(data)
-      ? data.filter(item => existingIds.has(item.fieldId)).map(item => existing.find(value => value.fieldId === item.fieldId)!)
-      : [];
-    const orderedIds = new Set(ordered.map(item => item.fieldId));
-    settingList.value = [...ordered, ...existing.filter(item => !orderedIds.has(item.fieldId))];
+  const notify = (message: string, toastType = ToastType.success) => {
+    try { bitable.ui.showToast({ toastType, message }); } catch { /* outside Feishu */ }
+  };
+
+  const defaultSettings = () => {
+    return fieldList.value.map((field, index) => ({
+        fieldId: field.id,
+        name: field.name,
+        hidden: false,
+        width: index === 1 ? 150 : index === 0 ? 112 : 88,
+      }));
   };
 
   const loadCurrentView = async () => {
     loading.value = true;
+    errorMessage.value = '';
     try {
       const table = await bitable.base.getActiveTable();
       const view = await table.getActiveView();
-      const selectableView = view as typeof view & { getSelectedRecordIdList: () => Promise<string[]> };
+      const selectable = view as typeof view & { getSelectedRecordIdList?: () => Promise<string[]> };
       const recordIds = printScope.value === 'selected'
-        ? await selectableView.getSelectedRecordIdList()
+        ? await selectable.getSelectedRecordIdList?.() || []
         : (await view.getVisibleRecordIdList()).filter(Boolean) as string[];
       if (printScope.value === 'selected' && !recordIds.length) {
         rows.value = [];
-        bitable.ui.showToast({ toastType: ToastType.warning, message: '请先在多维表格中选择要打印的记录' });
+        notify('请先在表格中选择要打印的记录', ToastType.warning);
         return;
       }
       const metaMap = new Map(fieldList.value.map(field => [field.id, field]));
-      rows.value = await Promise.all(recordIds.map(async (recordId: string) => {
+      rows.value = await Promise.all(recordIds.slice(0, 200).map(async recordId => {
         const values: IPrintRow['values'] = {};
         await Promise.all(visibleSettings.value.map(async field => {
-          const meta = metaMap.get(field.fieldId);
-          if (meta?.type === FieldType.Attachment) {
-            const raw = await table.getCellValue(field.fieldId, recordId);
-            const tokens = Array.isArray(raw) ? raw.map(item => (item as { token?: string }).token).filter(Boolean) as string[] : [];
-            const images = tokens.length
-              ? await table.getCellAttachmentUrls(tokens, field.fieldId, recordId)
-              : [];
-            values[field.fieldId] = { text: '', images };
-          } else {
-            values[field.fieldId] = { text: await table.getCellString(field.fieldId, recordId) };
+          try {
+            const meta = metaMap.get(field.fieldId);
+            if (meta?.type === FieldType.Attachment) {
+              const raw = await table.getCellValue(field.fieldId, recordId);
+              const tokens = Array.isArray(raw)
+                ? raw.map(item => (item as { token?: string }).token).filter(Boolean) as string[]
+                : [];
+              values[field.fieldId] = {
+                text: '',
+                images: tokens.length ? await table.getCellAttachmentUrls(tokens, field.fieldId, recordId) : [],
+              };
+            } else {
+              values[field.fieldId] = { text: await table.getCellString(field.fieldId, recordId) };
+            }
+          } catch {
+            values[field.fieldId] = { text: '' };
           }
         }));
         return { recordId, values };
       }));
+    } catch (error) {
+      errorMessage.value = error instanceof Error ? error.message : '无法读取当前多维表格';
+      rows.value = [];
     } finally {
       loading.value = false;
     }
@@ -77,109 +81,116 @@ const usePrint = () => {
 
   const init = async () => {
     loading.value = true;
+    errorMessage.value = '';
     try {
       const table = await bitable.base.getActiveTable();
       const view = await table.getActiveView();
       const allFields = await table.getFieldMetaList();
       const visibleFieldIds = await view.getVisibleFieldIdList();
-      const fieldMap = new Map(allFields.map(field => [field.id, field]));
-      fieldList.value = visibleFieldIds.map(id => fieldMap.get(id)).filter(Boolean) as IFieldMeta[];
-      await getSettingList();
-      const savedTemplates = await bitable.bridge.getData<IPrintTemplate[]>(TEMPLATE_KEY);
-      templates.value = Array.isArray(savedTemplates) ? savedTemplates : [];
+      const map = new Map(allFields.map(field => [field.id, field]));
+      fieldList.value = visibleFieldIds.map(id => map.get(id)).filter(Boolean) as IFieldMeta[];
+      try {
+        const name = await (table as typeof table & { getName?: () => Promise<string> }).getName?.();
+        if (name) {
+          tableName.value = name;
+          printTitle.value = `${name}打印`;
+        }
+      } catch { /* optional SDK method */ }
+      settingList.value = defaultSettings();
+      try {
+        const saved = await bitable.bridge.getData<IPrintTemplate[]>(TEMPLATE_KEY);
+        templates.value = Array.isArray(saved) ? saved : [];
+      } catch { templates.value = []; }
       await loadCurrentView();
+    } catch (error) {
+      errorMessage.value = error instanceof Error ? error.message : '插件没有获得多维表格读取权限，请重新打开插件';
     } finally {
       loading.value = false;
     }
   };
 
-  const handleSettingListUpdate = async (list: IFieldMetaSettings[]) => {
-    settingList.value = list;
-    const result = await bitable.bridge.setData(SETTING_KEY, list);
-    bitable.ui.showToast({
-      toastType: result ? ToastType.success : ToastType.error,
-      message: result ? '打印字段设置已保存' : '打印字段设置保存失败',
-    });
-    await loadCurrentView();
-  };
-
   const applyTemplate = async (templateId: string) => {
     selectedTemplateId.value = templateId;
-    if (templateId === 'production_schedule') {
-      printTitle.value = '生产排期';
+    const template = templateId === 'default_template' ? undefined : templates.value.find(item => item.id === templateId);
+    if (!template) {
+      printTitle.value = `${tableName.value}打印`;
       orientation.value = 'portrait';
-      settingList.value = fieldList.value.map(field => ({
-        fieldId: field.id,
-        name: field.name,
-        hidden: !DEFAULT_FIELDS.has(field.name),
-      }));
+      settingList.value = defaultSettings();
     } else {
-      const template = templates.value.find(item => item.id === templateId);
-      if (!template) return;
       printTitle.value = template.title;
       orientation.value = template.orientation;
-      const currentMap = new Map(fieldList.value.map(field => [field.id, field]));
-      const restored = template.fields
-        .filter(item => currentMap.has(item.fieldId))
-        .map(item => ({ ...item, name: currentMap.get(item.fieldId)!.name }));
-      const restoredIds = new Set(restored.map(item => item.fieldId));
-      settingList.value = [
-        ...restored,
-        ...fieldList.value.filter(field => !restoredIds.has(field.id)).map(field => ({
-          fieldId: field.id, name: field.name, hidden: true,
-        })),
-      ];
+      const current = new Map(fieldList.value.map(field => [field.id, field]));
+      const restored = template.fields.filter(item => current.has(item.fieldId)).map(item => ({ ...item, name: current.get(item.fieldId)!.name }));
+      const ids = new Set(restored.map(item => item.fieldId));
+      settingList.value = [...restored, ...fieldList.value.filter(field => !ids.has(field.id)).map(field => ({
+        fieldId: field.id, name: field.name, hidden: true, width: 88,
+      }))];
     }
     await loadCurrentView();
   };
 
-  const saveTemplate = async (name: string) => {
-    const cleanName = name.trim();
-    if (!cleanName) return false;
+  const persistTemplates = async () => {
+    try { await bitable.bridge.setData(TEMPLATE_KEY, templates.value); } catch { /* local UI remains usable */ }
+  };
+
+  const saveTemplate = async (name?: string) => {
+    const cleanName = (name || printTitle.value || '未命名模板').trim();
+    const existing = templates.value.find(item => item.id === selectedTemplateId.value);
     const template: IPrintTemplate = {
-      id: `template_${Date.now()}`,
+      id: existing?.id || `template_${Date.now()}`,
       name: cleanName,
       title: printTitle.value || cleanName,
       orientation: orientation.value,
       fields: settingList.value.map(item => ({ ...item })),
+      tableName: tableName.value,
+      updatedAt: Date.now(),
     };
-    templates.value = [...templates.value, template];
-    const result = await bitable.bridge.setData(TEMPLATE_KEY, templates.value);
-    if (result) selectedTemplateId.value = template.id;
-    bitable.ui.showToast({
-      toastType: result ? ToastType.success : ToastType.error,
-      message: result ? `模板“${cleanName}”已保存` : '模板保存失败',
-    });
-    return result;
+    templates.value = existing
+      ? templates.value.map(item => item.id === existing.id ? template : item)
+      : [...templates.value, template];
+    selectedTemplateId.value = template.id;
+    await persistTemplates();
+    notify('模板已保存');
+    return template.id;
   };
 
-  const deleteTemplate = async () => {
-    if (selectedTemplateId.value === 'production_schedule') return false;
-    templates.value = templates.value.filter(item => item.id !== selectedTemplateId.value);
-    const result = await bitable.bridge.setData(TEMPLATE_KEY, templates.value);
-    if (result) await applyTemplate('production_schedule');
-    return result;
+  const createTemplate = () => {
+    selectedTemplateId.value = `template_${Date.now()}`;
+    printTitle.value = '未命名模板';
+    orientation.value = 'portrait';
+    settingList.value = fieldList.value.map(field => ({ fieldId: field.id, name: field.name, hidden: true, width: 88 }));
+    rows.value = [];
+  };
+
+  const deleteTemplate = async (id: string) => {
+    templates.value = templates.value.filter(item => item.id !== id);
+    await persistTemplates();
+    notify('模板已删除');
+  };
+
+  const toggleField = async (fieldId: string) => {
+    settingList.value = settingList.value.map(item => item.fieldId === fieldId ? { ...item, hidden: !item.hidden } : item);
+    await loadCurrentView();
+  };
+
+  const moveField = async (fieldId: string, direction: -1 | 1) => {
+    const visible = visibleSettings.value;
+    const current = visible.findIndex(item => item.fieldId === fieldId);
+    const target = current + direction;
+    if (current < 0 || target < 0 || target >= visible.length) return;
+    const a = settingList.value.findIndex(item => item.fieldId === visible[current].fieldId);
+    const b = settingList.value.findIndex(item => item.fieldId === visible[target].fieldId);
+    const next = [...settingList.value];
+    [next[a], next[b]] = [next[b], next[a]];
+    settingList.value = next;
+    await loadCurrentView();
   };
 
   return {
-    rows,
-    loading,
-    printScope,
-    printTitle,
-    orientation,
-    templates,
-    selectedTemplateId,
-    visibleSettings,
-    isSettingPanelShow,
-    settingList,
-    init,
-    loadCurrentView,
+    rows, loading, errorMessage, fieldList, tableName, printScope, printTitle, orientation,
+    templates, selectedTemplateId, settingList, visibleSettings,
+    init, loadCurrentView, applyTemplate, saveTemplate, createTemplate, deleteTemplate, toggleField, moveField,
     handlePrint: () => window.print(),
-    handleSetting: () => { isSettingPanelShow.value = true; },
-    handleSettingListUpdate,
-    applyTemplate,
-    saveTemplate,
-    deleteTemplate,
   };
 };
 
