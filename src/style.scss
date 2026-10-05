@@ -1,0 +1,96 @@
+:root {
+  font-family: Arial, "PingFang SC", "Microsoft YaHei", sans-serif;
+  color: #1f2329;
+  background: #f5f6f7;
+}
+
+* { box-sizing: border-box; }
+body { margin: 0; }
+
+.toolbar {
+  position: sticky;
+  top: 0;
+  z-index: 10;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 12px 16px;
+  background: #fff;
+  border-bottom: 1px solid #e5e6eb;
+}
+
+.record-count { margin-left: auto; color: #646a73; font-size: 13px; }
+.title-input { width: 150px; }
+.template-select { width: 170px; }
+.scope-select { width: 150px; }
+.orientation-select { width: 110px; }
+
+.print-page {
+  width: 190mm;
+  min-height: 277mm;
+  margin: 16px auto;
+  padding: 10mm 8mm;
+  background: #fff;
+  box-shadow: 0 2px 12px rgba(31, 35, 41, .12);
+}
+
+.print-page.landscape { width: 277mm; min-height: 190mm; }
+
+h1 { margin: 0 0 8px; font-size: 18px; font-weight: 600; text-align: left; }
+
+.schedule-table {
+  width: 100%;
+  border-collapse: collapse;
+  table-layout: fixed;
+  font-size: 12px;
+}
+
+.schedule-table th,
+.schedule-table td {
+  border: 1px solid #222;
+  padding: 4px 6px;
+  min-height: 26px;
+  text-align: left;
+  vertical-align: top;
+  white-space: normal;
+  overflow-wrap: anywhere;
+}
+
+.schedule-table th {
+  height: 36px;
+  background: #f0f1f3;
+  text-align: center;
+  vertical-align: middle;
+  font-weight: 500;
+}
+
+.schedule-table tr { break-inside: avoid; page-break-inside: avoid; }
+.cell-image {
+  display: inline-block;
+  max-width: 100%;
+  max-height: 90px;
+  margin: 2px;
+  object-fit: contain;
+  vertical-align: top;
+}
+.sequence-column { width: 9%; }
+.field-单号 { width: 16%; }
+.field-产品 { width: 23%; }
+.field-数量 { width: 16%; }
+.field-交期 { width: 16%; }
+.field-生产安排 { width: 11%; }
+.field-已包装数量 { width: 11%; }
+.empty-cell { padding: 32px !important; text-align: center !important; color: #8f959e; }
+
+@page { size: A4 portrait; margin: 10mm; }
+@page landscape { size: A4 landscape; margin: 10mm; }
+
+@media print {
+  :root, body { background: #fff; }
+  .toolbar, .el-overlay { display: none !important; }
+  .print-page { width: auto; min-height: 0; margin: 0; padding: 0; box-shadow: none; }
+  .print-page.landscape { page: landscape; }
+  .schedule-table { font-size: 11pt; }
+  .schedule-table thead { display: table-header-group; }
+  h1 { font-size: 14pt; }
+}
